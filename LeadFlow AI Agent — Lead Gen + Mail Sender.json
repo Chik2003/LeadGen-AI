@@ -1,0 +1,646 @@
+{
+  "name": "LeadFlow AI Agent — Lead Gen + Mail Sender",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "leadflow-trigger",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "f2b260fa-fab7-495f-a0b5-99c7fad61439",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        112
+      ],
+      "webhookId": "a63e4c90-81e7-4650-8818-77ea858d90e9"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "6c85dee9-c9b0-443b-bfc8-4f68d1c19301",
+      "name": "Set Search Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        -224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://app.scrapingbee.com/api/v1/",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "5N2NAKRHSGWJR0FF0YJ27HJPLO9W09K2JIVCKIJYQEXFDIC8FNF14T3M9KLQIF9RDGW75VBTPHWDLNM7"
+            },
+            {
+              "name": "url",
+              "value": "=https://www.google.com/search?q={{ encodeURIComponent($json.query + ' ' + $json.location + ' email contact') }}"
+            },
+            {
+              "name": "extract_rules",
+              "value": "{\"names\": {\"selector\": \"h3\", \"type\": \"list\"}, \"links\": {\"selector\": \"a\", \"type\": \"list\", \"output\": \"@href\"}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "c6736ce2-ccdd-4c19-9ab1-c2cadd321a62",
+      "name": "Scrape Web (ScrapingBee)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/v1/mixed_people/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Cache-Control",
+              "value": "no-cache"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "2434e0a9-de14-4d8d-ab6e-565569dd1330",
+      "name": "Scrape Apollo Free (Fallback)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "=You are a lead qualification AI. Given raw scraped data, extract structured lead information and score each lead.\n\nRaw data: {{ JSON.stringify($json) }}\n\nFor each lead, extract:\n- full_name (string)\n- email (string)\n- company (string)\n- role (string)\n- linkedin_url (string or null)\n- website (string or null)\n- industry (string)\n- location (string)\n- qualification_score (0-100, based on: has email=+40, has LinkedIn=+20, clear role=+20, matches target industry=+20)\n- pain_points (string, 1-2 sentences about likely challenges)\n- personalization_hook (string, 1 sentence for email opening)\n\nReturn ONLY a valid JSON array of lead objects. No markdown, no explanation.",
+        "options": {
+          "systemMessage": "You are a precise lead extraction AI. Always return valid JSON arrays only.",
+          "maxIterations": 3
+        }
+      },
+      "id": "5ac40fd4-579d-4198-a8e1-5f7585c35136",
+      "name": "AI Agent — Extract & Score Leads",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawOutput = $input.first().json.output || $input.first().json.text || '[]';\nlet leads = [];\ntry {\n  const cleaned = rawOutput.replace(/```json/g, '').replace(/```/g, '').trim();\n  leads = JSON.parse(cleaned);\n} catch(e) {\n  const match = rawOutput.match(/\\[.*\\]/s);\n  if (match) leads = JSON.parse(match[0]);\n}\nreturn leads.map(lead => ({ json: { ...lead, status: 'scraped', created_at: new Date().toISOString() } }));"
+      },
+      "id": "3d809374-4af1-4f17-ace6-6f00a4aacc10",
+      "name": "Parse AI Lead JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.qualification_score }}",
+              "rightValue": 60,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5b5906a6-3b1a-45cd-a7e3-eaeb60b4028c",
+      "name": "Filter High-Score Leads",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        672,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.hunter.io/v2/email-verifier",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "api_key",
+              "value": "YOUR_HUNTER_IO_API_KEY"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "42d5d988-13ec-49e1-9ca0-5da60d8a8401",
+      "name": "Verify Email (Hunter.io)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst verification = item.data || {};\nconst isVerified = verification.status === 'valid';\nreturn [{\n  json: {\n    ...item,\n    email_verified: isVerified,\n    email_status: verification.status || 'unknown',\n    smtp_check: verification.smtp_check || false,\n    disposable: verification.disposable || false,\n    status: isVerified ? 'verified' : 'unverified'\n  }\n}];"
+      },
+      "id": "b476516a-ff38-40f9-9b4f-a463c795db72",
+      "name": "Merge Verification Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.email_verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "278fb43b-9ddd-45b7-b57f-ce26489d77b8",
+      "name": "Route: Verified Only",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nlet emailContent = {};\ntry {\n  const raw = item.message?.content || item.content || '{}';\n  const cleaned = raw.replace(/```json/g, '').replace(/```/g, '').trim();\n  emailContent = JSON.parse(cleaned);\n} catch(e) {\n  emailContent = { subject: 'Quick question for you', body: 'Hi ' + item.full_name + ',\\n\\nWould love to connect.' };\n}\nreturn [{ json: { ...item, email_subject: emailContent.subject, email_body: emailContent.body } }];"
+      },
+      "id": "3a20b131-d0c7-4806-b489-42ac8c31377f",
+      "name": "Parse Email Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.email_subject }}",
+        "message": "={{ $json.email_body }}",
+        "options": {
+          "appendAttribution": false,
+          "replyTo": "your-reply@yourdomain.com"
+        }
+      },
+      "id": "7096054c-1499-4efb-b4c1-7b1018a9ee7d",
+      "name": "Send Email via Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1984,
+        0
+      ],
+      "webhookId": "1da33206-6f5c-423a-830f-3f35be8fad5f",
+      "retryOnFail": true,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "vpTBWJQCz8F5ku4e",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "include": "allInputData",
+        "options": {}
+      },
+      "id": "5db5a4bb-ed2e-495e-8e95-e218b21122cf",
+      "name": "Mark as Sent + Timestamp",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        2208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "76b2327a-1cb4-43e8-91c1-60e191689ddc",
+      "name": "Export to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        2432,
+        112
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "amJu206u31CLSW9V",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": true, \"leads_processed\": {{ $runIndex + 1 }}, \"timestamp\": \"{{ new Date().toISOString() }}\" }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a24dd1e9-1d0a-474f-830c-7493286013e0",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "5ad8cfa1-41b8-4eed-9184-b445d6f9bf70",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        1552,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "model": "groq/compound",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        208,
+        320
+      ],
+      "id": "45425d4d-9205-4be8-b8f4-51b353214d3d",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "LXvbqyuuaVOurCeY",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "classify",
+        "options": {}
+      },
+      "id": "b6c57625-a092-4cd1-83aa-dc95da7be189",
+      "name": "AI Compose Personalized Email",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [
+        1552,
+        112
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "O7JYmxfWfmxU89U5",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        336,
+        368
+      ],
+      "id": "26b79e11-928b-4948-a41c-c7a1cef1b4ea",
+      "name": "Simple Memory"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Search Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Search Config": {
+      "main": [
+        [
+          {
+            "node": "Scrape Web (ScrapingBee)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Scrape Apollo Free (Fallback)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Web (ScrapingBee)": {
+      "main": [
+        [
+          {
+            "node": "AI Agent — Extract & Score Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Apollo Free (Fallback)": {
+      "main": [
+        [
+          {
+            "node": "AI Agent — Extract & Score Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent — Extract & Score Leads": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Lead JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Lead JSON": {
+      "main": [
+        [
+          {
+            "node": "Filter High-Score Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter High-Score Leads": {
+      "main": [
+        [
+          {
+            "node": "Verify Email (Hunter.io)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Email (Hunter.io)": {
+      "main": [
+        [
+          {
+            "node": "Merge Verification Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Verification Result": {
+      "main": [
+        [
+          {
+            "node": "Route: Verified Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Verified Only": {
+      "main": [
+        [
+          {
+            "node": "AI Compose Personalized Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email Content": {
+      "main": [
+        [
+          {
+            "node": "Send Email via Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email via Gmail": {
+      "main": [
+        [
+          {
+            "node": "Mark as Sent + Timestamp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Sent + Timestamp": {
+      "main": [
+        [
+          {
+            "node": "Export to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Export to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent — Extract & Score Leads",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Compose Personalized Email": {
+      "main": [
+        [
+          {
+            "node": "Parse Email Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent — Extract & Score Leads",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": -1
+  },
+  "versionId": "ec4f15e0-d0cf-445b-8074-90994f432524",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2a3fa7110c76d78cd11e99dee1b6ab4db2b41d4c0cab3ef111d69d839729443e"
+  },
+  "id": "EdlEQ7wFAkng7QBk",
+  "tags": []
+}
